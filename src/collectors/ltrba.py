@@ -3,7 +3,13 @@ from datetime import datetime, timezone
 
 from bs4 import BeautifulSoup
 
-from src.extract import address_from_page_text, published_place, published_resorts
+from src.extract import (
+    address_from_page_text,
+    combine_resorts,
+    member_place,
+    published_brand_list,
+    published_resorts,
+)
 from src.http import HttpClient
 from src.log import fallback, note
 from src.models import Record
@@ -34,32 +40,31 @@ class LtrbaCollector:
         collected_at = _now()
         profiles = set(re.findall(r"/SiteMembers/([0-9a-f-]{36})", html, flags=re.I))
         members = _group_members(html)
-        labels = _company_labels(html)
         offices: dict[str, str] = {}
         records: list[Record] = []
         for member_id, parts in members.items():
             name, phone = _name_and_phone(parts)
             if not name and not phone:
                 continue
-            bio = _bio(parts)
-            label = labels.get(member_id, "")
-            resort = published_resorts(bio)
-            address = published_place(bio, label)
-            email = _email(parts)
-            if not resort or not address or _broad(address):
-                filled_resort, filled_address = _fill_from_company_site(
-                    self.http, email, offices, resort, address
-                )
-                resort = resort or filled_resort
-                if filled_address and (
-                    not address
-                    or (_broad(address) and re.search(r"\b[A-Z]{2}\s+\d{5}\b", filled_address))
-                ):
-                    address = filled_address
-            if not resort or not address:
-                note(f"{name or 'ficha'} sem resort ou endereço, deixada de fora")
-                continue
             source_url = f"{PROFILE_PREFIX}{member_id}" if member_id in profiles else DIRECTORY_URL
+            fields = _profile_fields(self.http.get_text(source_url) or "") if member_id in profiles else {}
+            biography = fields.get("biography") or _bio(parts)
+            resort = combine_resorts(
+                published_brand_list(fields.get("brands", "")),
+                published_resorts(biography),
+            )
+            address = member_place(
+                fields.get("city", ""),
+                fields.get("state", ""),
+                fields.get("country", ""),
+            )
+            if not resort or not address:
+                filled_resort, filled_address = _fill_from_company_site(self.http, _email(parts), offices)
+                resort = resort or filled_resort
+                address = address or filled_address
+            if not resort or not address:
+                note(f"{name or 'card'} has no resort or address, left out")
+                continue
             records.append(
                 Record(
                     name=name,
@@ -98,18 +103,24 @@ def _name_and_phone(parts: list[str]) -> tuple[str, str]:
     return " ".join(names[:3]), phone
 
 
-def _broad(address: str) -> bool:
-    return address.casefold() in {
-        "florida",
-        "california",
-        "nevada",
-        "hawaii",
-        "utah",
-        "colorado",
-        "washington",
-        "spain",
-        "maui",
-        "united kingdom",
+def _profile_fields(html: str) -> dict[str, str]:
+    soup = BeautifulSoup(html, "html.parser")
+
+    def value(placeholder: str) -> str:
+        node = soup.find("input", attrs={"placeholder": placeholder})
+        if node is not None and node.get("value"):
+            return re.sub(r"\s+", " ", node["value"]).strip()
+        area = soup.find("textarea", attrs={"placeholder": placeholder})
+        if area is None:
+            return ""
+        return re.sub(r"\s+", " ", area.get_text("\n", strip=True)).strip()
+
+    return {
+        "city": value("City"),
+        "state": value("State"),
+        "country": value("Country"),
+        "biography": value("Biography"),
+        "brands": value("Timeshare Brands"),
     }
 
 
@@ -131,27 +142,14 @@ def _email(parts: list[str]) -> str:
     return ""
 
 
-def _company_labels(html: str) -> dict[str, str]:
-    labels: dict[str, str] = {}
-    pattern = re.compile(r'alt="([^"]+)"[\s\S]{0,2500}?__([0-9a-f-]{36})', re.I)
-    for match in pattern.finditer(html):
-        label = re.sub(r"\s+", " ", match.group(1)).strip()
-        if "logo" in label.casefold() or "basic black" in label.casefold():
-            continue
-        labels.setdefault(match.group(2), label)
-    return labels
-
-
 def _fill_from_company_site(
     http: HttpClient,
     email: str,
     cache: dict[str, str],
-    resort: str,
-    address: str,
 ) -> tuple[str, str]:
     domain = email.split("@")[-1].lower() if "@" in email else ""
     if not domain or domain in _FREE_EMAIL:
-        return resort, address
+        return "", ""
     page_text = cache.get(domain)
     if page_text is None:
         page_text = _company_text(http, domain)
@@ -163,20 +161,25 @@ def _fill_from_company_site(
         for part in re.split(r"[.\n]", page_text)
         if re.search(r"speciali[sz]", part, flags=re.I) and len(part) < 240
     )
-    return published_resorts(specialty), address_from_page_text(page_text) or published_place(page_text)
+    return published_resorts(specialty), address_from_page_text(page_text)
+
+
+_COMPANY_PATHS = ("/", "/contact-us", "/contact", "/contact-me", "/terms-of-use")
 
 
 def _company_text(http: HttpClient, domain: str) -> str:
     pages: list[str] = []
-    for path in ("/", "/contact-us", "/contact"):
-        html = http.get_text(f"https://{domain}{path}")
+    for index, path in enumerate(_COMPANY_PATHS):
+        html = http.get_text(f"https://{domain}{path}", quiet=True)
         if not html:
+            if index + 1 < len(_COMPANY_PATHS):
+                fallback(f"{domain}{path}", _COMPANY_PATHS[index + 1])
             continue
-        pages.append(BeautifulSoup(html, "html.parser").get_text("\n", strip=True))
-    for text in pages:
+        text = BeautifulSoup(html, "html.parser").get_text("\n", strip=True)
         found = address_from_page_text(text)
         if found and re.search(r"\d", found):
             return text
+        pages.append(text)
     for text in pages:
         if address_from_page_text(text) or published_resorts(text):
             return text

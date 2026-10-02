@@ -1,11 +1,8 @@
-import logging
-
 from bs4 import BeautifulSoup
 
 from src.http import HttpClient
+from src.log import note
 from src.models import Record
-
-logger = logging.getLogger(__name__)
 
 # A public company profile. Owner resale contact on RedWeek is behind membership.
 SAMPLE_URL = "https://www.redweek.com/timeshare-companies/hgvc"
@@ -26,9 +23,9 @@ class RedweekCollector:
         self.http = http
 
     def collect(self) -> list[Record]:
-        html = self.http.get_text(SAMPLE_URL)
+        html = self.http.get_text(SAMPLE_URL, quiet=True)
         if not html:
-            logger.info("RedWeek page unavailable; no records emitted")
+            note("RedWeek page unavailable, no records")
             return []
 
         soup = BeautifulSoup(html, "html.parser")
@@ -36,12 +33,8 @@ class RedweekCollector:
             node.decompose()
         phones = [anchor.get_text(" ", strip=True) for anchor in soup.select("a[href^='tel:']")]
         if not phones:
-            logger.info(
-                "RedWeek public page %s has no listing telephone. "
-                "Owner contact is membership-gated, so no record was emitted.",
-                SAMPLE_URL,
-            )
+            note("RedWeek has no public phone, no records")
             return []
 
-        logger.info("RedWeek exposed %s telephone link(s); leaving them uncollected without a named contact block", len(phones))
+        note("RedWeek has no contact block, no records")
         return []

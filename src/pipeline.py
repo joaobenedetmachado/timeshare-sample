@@ -14,16 +14,16 @@ def run(settings: Settings | None = None) -> list[Record]:
     settings = settings or Settings.from_env()
     raw = _collect(settings)
     normalized = [normalize_record(record) for record in raw]
-    success(f"normalização  {len(normalized)} registros")
+    success(f"normalize  {len(normalized)} records")
     valid = validate(normalized)
-    success(f"validação  {len(valid)} registros")
+    success(f"validate  {len(valid)} records")
     unique = deduplicate(valid)
     removed = len(valid) - len(unique)
     if removed:
-        fallback(f"{removed} duplicados", "ficar com a linha mais completa")
-    success(f"deduplicação  {len(unique)} registros")
+        fallback(f"{removed} duplicates", "keeping the fuller row")
+    success(f"dedupe  {len(unique)} records")
     export_csv(unique, settings.output_path)
-    success(f"csv  {len(unique)} linhas em {settings.output_path}")
+    success(f"csv  {len(unique)} rows in {settings.output_path}")
     return unique
 
 
@@ -46,10 +46,10 @@ def _collect(settings: Settings) -> list[Record]:
             try:
                 found = collector.collect()
             except Exception as exc:
-                fallback(str(collector.source), f"a próxima fonte ({exc.__class__.__name__})")
+                fallback(str(collector.source), f"the next source ({exc.__class__.__name__})")
                 continue
             if found:
-                success(f"{collector.source}  {len(found)} registros")
+                success(f"{collector.source}  {len(found)} records")
             raw.extend(found)
     finally:
         http.close()

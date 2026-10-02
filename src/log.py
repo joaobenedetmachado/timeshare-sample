@@ -9,7 +9,7 @@ _READY = False
 
 
 def success(message: str) -> None:
-    _enable_color()
+    _prepare()
     line = f"ok  {message}"
     if _use_color():
         line = f"{_GREEN}{line}{_RESET}"
@@ -17,11 +17,21 @@ def success(message: str) -> None:
 
 
 def fallback(failed: str, next_step: str) -> None:
-    print(f"{failed} não deu, tentando {next_step}", flush=True)
+    _prepare()
+    print(f"{failed} failed, trying {next_step}", flush=True)
 
 
 def note(message: str) -> None:
+    _prepare()
     print(message, flush=True)
+
+
+def _prepare() -> None:
+    _enable_color()
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        return
 
 
 def _use_color() -> bool:

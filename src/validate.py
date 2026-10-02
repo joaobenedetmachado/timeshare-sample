@@ -24,8 +24,8 @@ def validate(records: list[Record]) -> list[Record]:
     for record in records:
         reason = _reject_reason(record)
         if reason:
-            who = record.name or record.source or "registro"
-            note(f"{who} fora: {reason}")
+            who = record.name or record.source or "record"
+            note(f"{who} dropped: {reason}")
             continue
         kept.append(record)
     return kept
@@ -33,13 +33,13 @@ def validate(records: list[Record]) -> list[Record]:
 
 def _reject_reason(record: Record) -> str | None:
     if record.contact_type not in CONTACT_TYPES:
-        return f"invalid contact_type {record.contact_type!r}"
+        return "invalid contact type"
     if not _URL_OK.match(record.source_url):
-        return "missing source_url"
+        return "missing source url"
     if not record.collected_at:
         return "missing collected_at"
     if not record.phone_number or not _PHONE_OK.match(record.phone_number):
-        return "phone_number is missing or not normalized"
+        return "invalid phone"
     if not record.name:
         return "missing name"
     if not record.address:

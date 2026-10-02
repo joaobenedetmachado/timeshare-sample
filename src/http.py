@@ -39,7 +39,7 @@ class HttpClient:
     def get_text(self, url: str, *, quiet: bool = False) -> str | None:
         if not self.allowed(url):
             if not quiet:
-                fallback(_label(url), "pular (robots.txt)")
+                fallback(_label(url), "skip (robots.txt)")
             return None
 
         for attempt in range(1, self.max_retries + 1):
@@ -49,20 +49,20 @@ class HttpClient:
             except httpx.HTTPError:
                 if attempt == self.max_retries:
                     if not quiet:
-                        fallback(_label(url), "seguir sem essa página")
+                        fallback(_label(url), "skip this page")
                     return None
-                fallback(_label(url), "de novo")
+                fallback(_label(url), "again")
                 time.sleep(min(8.0, 2 ** (attempt - 1)))
                 continue
 
             if response.status_code in RETRY_STATUSES and attempt < self.max_retries:
-                fallback(_label(url), "de novo")
+                fallback(_label(url), "again")
                 time.sleep(min(8.0, 2 ** (attempt - 1)))
                 continue
 
             if response.status_code >= 400:
                 if not quiet:
-                    fallback(_label(url), "seguir sem essa página")
+                    fallback(_label(url), "skip this page")
                 return None
 
             return response.text
@@ -86,17 +86,17 @@ class HttpClient:
         try:
             response = self._client.get(robots_url)
         except httpx.HTTPError:
-            fallback(parsed.netloc, "pular o site")
+            fallback(parsed.netloc, "skip this host")
             self._robots[origin] = None
             return None
 
         parser = RobotFileParser()
         parser.set_url(robots_url)
         if response.status_code == 404:
-            fallback(f"{parsed.netloc}/robots.txt", "ler as páginas públicas")
+            fallback(f"{parsed.netloc}/robots.txt", "read the public pages")
             parser.parse([])
         elif response.status_code >= 400:
-            fallback(parsed.netloc, "pular o site")
+            fallback(parsed.netloc, "skip this host")
             self._robots[origin] = None
             return None
         else:
@@ -104,7 +104,7 @@ class HttpClient:
 
         crawl_delay = parser.crawl_delay(self.user_agent) or parser.crawl_delay("*")
         if crawl_delay and crawl_delay > self.delay_seconds:
-            success(f"{parsed.netloc} espera {crawl_delay:g}s")
+            success(f"{parsed.netloc} waits {crawl_delay:g}s")
             self.delay_seconds = float(crawl_delay)
 
         self._robots[origin] = parser

@@ -39,7 +39,8 @@ class SmtnCollector:
             record = _parse_detail(page, url)
             if record:
                 records.append(record)
-        logger.info("SellMyTimeshareNow parsed %s listing pages", len(records))
+        if not records:
+            note("SellMyTimeshareNow has no listings, no records")
         return records
 
 
@@ -64,7 +65,7 @@ def _parse_detail(html: str, url: str) -> Record | None:
     title = soup.title.get_text(" ", strip=True) if soup.title else ""
     resort = re.sub(r"\s+Timeshare for Sale\b.*$", "", title, flags=re.I).strip()
     if not resort:
-        logger.info("No resort title on %s", url)
+        fallback("listing with no title", "the next one")
         return None
 
     phone_node = soup.select_one("span.phone-number")
@@ -96,7 +97,7 @@ def _listing_address(soup: BeautifulSoup) -> str:
     seen: set[str] = set()
     for part in parts:
         key = part.casefold()
-        if key in seen:
+        if key in seen or key in {"outside us", "outside u.s."}:
             continue
         seen.add(key)
         unique.append(part)

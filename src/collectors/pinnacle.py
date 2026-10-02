@@ -1,12 +1,10 @@
-import logging
 import re
 from datetime import datetime, timezone
 from html import unescape
 
 from src.http import HttpClient
+from src.log import fallback
 from src.models import Record
-
-logger = logging.getLogger(__name__)
 
 # Public state-search ids. Each page is a brokerage result list, not an owner directory.
 STATE_PAGES = (
@@ -64,7 +62,6 @@ class PinnacleCollector:
                 records.append(record)
                 if len(records) >= self.max_resorts:
                     break
-        logger.info("Pinnacle Vacations parsed %s distinct resorts", len(records))
         return records
 
 
@@ -98,7 +95,7 @@ def _parse_results(html: str, url: str, state_name: str) -> list[Record]:
             )
         )
     if not records:
-        logger.info("No Pinnacle listings parsed for %s", state_name)
+        fallback(state_name, "the next state")
     return records
 
 

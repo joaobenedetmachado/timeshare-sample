@@ -1,3 +1,4 @@
+import html
 import re
 
 # Brands and resort names that appear as proper nouns on the public pages.
@@ -8,9 +9,6 @@ _LEADING = (
     r"HGVC|Westgate|Ritz-Carlton|Holiday Inn(?:\s+Club Vacations)?|"
     r"Sands of Kahana|The Whaler|Vacation Internationale|Club Wyndham|"
     r"Resorts West|Pahio|Sunterra Pacific"
-)
-_RESORT_NAME = re.compile(
-    rf"\b((?:{_LEADING})(?:(?:\s+(?:de|of|at)\s+|\s+)[A-Z][A-Za-z0-9'’-]*){{0,6}})"
 )
 _TRAIL_WORDS = {
     "sales",
@@ -48,80 +46,109 @@ _TRAIL_WORDS = {
     "spain",
     "since",
 }
-_PLACE_TAIL = re.compile(
-    r"^(?:Aruba|Florida|Hawaii|California|Arizona|Colorado|Utah|Nevada|Washington(?: State)?|"
-    r"North & South Carolina|North Carolina|South Carolina|Caribbean|Spain|Maui|"
-    r"United Kingdom|Costa del Sol|Cabo San Lucas|Palm Springs|Orlando|Breckenridge|"
-    r"Park City|Lahaina|Carlsbad|Scottsdale|Jackson Hole|Costa Rica|Punta Mita|"
-    r"Marbella|Phuket|Gatlinburg|Las Vegas)$",
+_HISTORY = re.compile(
+    r"\b(?:purchased my first|joined the|years of working with|entered the timeshare|storefront location)\b",
     re.I,
+)
+_BRAND = re.compile(rf"\b(?:{_LEADING})\b", re.I)
+_NEXT_WORD = re.compile(r"(?:\s+(?:de|of|at)\s+|\s+)([A-Z][A-Za-z0-9'’\-]*)")
+_ACRONYMS = {"HGVC", "VRI", "RCI", "VI"}
+_USA = {"usa", "us", "u.s.", "u.s.a.", "united states", "united states of america"}
+_STATE_NAME = (
+    "North Carolina|North Dakota|South Carolina|South Dakota|West Virginia|"
+    "New Hampshire|New Jersey|New Mexico|New York|Rhode Island|"
+    "Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|"
+    "Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|"
+    "Maine|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|"
+    "Nebraska|Nevada|Ohio|Oklahoma|Oregon|Pennsylvania|Tennessee|Texas|Utah|Vermont|"
+    "Virginia|Washington|Wisconsin|Wyoming"
+)
+_TIGHT_ADDRESS = re.compile(
+    r"(?P<street>\d{2,6}\s+[A-Za-z0-9.'\- ]{2,50}?\b"
+    r"(?i:Drive|Street|Avenue|Boulevard|Road|Lane|Circle|Court|Way|Dr|Rd|St|Ave|Blvd|Ln|Ct)\.?)"
+    r"(?P<suite>,?\s*Suite\s*[A-Za-z0-9\-]+)?"
+    r",?\s*(?P<city>(?:[A-Z][a-z]+\s*){1,3}?),\s*"
+    rf"(?P<state>{_STATE_NAME}|[A-Z]{{2}}),?\s*(?P<zip>\d{{5}})\b"
 )
 
 
 def published_resorts(text: str) -> str:
     found: list[str] = []
-    for match in _RESORT_NAME.finditer(text or ""):
-        name = _trim(match.group(1))
-        if name and _brand_count(name) <= 1:
-            found.append(name)
-    # "Hilton Resorts" is still a stated brand family; keep Hilton if nothing longer exists.
-    if re.search(r"\bHilton\b", text or "", flags=re.I) and not any(item.casefold().startswith("hilton") for item in found):
-        found.append("Hilton")
+    sentences = re.split(r"(?<=[.!])\s+", text or "")
+    for sentence in sentences:
+        if _HISTORY.search(sentence):
+            continue
+        found.extend(_scan_resorts(sentence))
+    if not any(item.casefold().startswith("hilton") for item in found):
+        for sentence in sentences:
+            if _HISTORY.search(sentence):
+                continue
+            if re.search(r"\bHilton\b", sentence, flags=re.I):
+                found.append("Hilton")
+                break
     return "; ".join(_prefer_longer(found)[:8])
 
 
+def published_brand_list(text: str) -> str:
+    """Brands named in a profile field, split on commas and line breaks."""
+    raw = html.unescape(text or "")
+    raw = re.sub(r"^include:\s*", "", raw.strip(), flags=re.I)
+    found: list[str] = []
+    for part in re.split(r"[\n,;]+", raw):
+        part = re.sub(r"\s+and many more.*$", "", part, flags=re.I).strip(" .")
+        if not part or re.search(r"\b(?:if your|please ask|many more)\b", part, re.I):
+            continue
+        found.extend(_scan_resorts(part))
+    return "; ".join(_prefer_longer(found)[:8])
+
+
+def combine_resorts(*chunks: str) -> str:
+    items: list[str] = []
+    for chunk in chunks:
+        items.extend(part.strip() for part in (chunk or "").split(";") if part.strip())
+    return "; ".join(_prefer_longer(items)[:8])
+
+
 def published_place(text: str, company_label: str = "") -> str:
-    office = _office(text or "")
-    if office:
-        return office
-    regions = _regions(text or "") + _label_places(company_label or "")
-    return "; ".join(_prefer_longer(regions)[:4])
+    """A stated office or 'licensed in City, State'. Markets and license states are not a place."""
+    del company_label
+    return _office(text or "")
+
+
+def member_place(city: str, state: str, country: str) -> str:
+    """City and state from a profile form. A state alone, or an 'Offices:' note, is not an address."""
+    city_text = _region_token(city)
+    state_text = _region_token(state)
+    country_text = _region_token(country)
+    if not city_text:
+        return ""
+    if len(state_text) == 2 and state_text.isalpha():
+        state_text = state_text.upper()
+    parts = [city_text]
+    if state_text:
+        parts.append(state_text)
+    if country_text and country_text.casefold() not in _USA:
+        parts.append(country_text)
+    return ", ".join(parts)
 
 
 def address_from_page_text(text: str) -> str:
-    lines = [re.sub(r"\s+", " ", line).strip(" ,|") for line in (text or "").splitlines()]
-    lines = [line for line in lines if line]
-    for index, line in enumerate(lines):
-        if not re.search(
-            r"\d{2,6}\s+\S.{0,50}\b(?:Dr|Drive|Rd|Road|St|Street|Ave|Avenue|Blvd|Boulevard|Way|Lane|Ln|Circle|Ct)\b",
-            line,
-            re.I,
-        ):
+    """A postal street with city and ZIP. License states and bare city names are left out."""
+    flat = re.sub(r"\s+", " ", text or "")
+    for match in _TIGHT_ADDRESS.finditer(flat):
+        before = flat[max(0, match.start() - 40) : match.start()]
+        if re.search(r"marriott|hilton|resort|club|vacation", before, re.I):
             continue
-        if re.search(r"marriott|hilton|resort|club|vacation", line, re.I):
-            continue
-        window = " ".join(lines[index : index + 3])
-        city_match = re.search(
-            r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*([A-Z]{2})\s+(\d{5})\b",
-            window,
-        )
-        if city_match and city_match.group(1).casefold().startswith(("road", "drive", "street", "johnson")):
-            city_match = re.search(
-                r"\b([A-Z][a-z]+),\s*([A-Z]{2})\s+(\d{5})\b",
-                window,
-            )
-        street = re.sub(r"\s+", " ", line).strip(" ,")
-        if city_match:
-            city = f"{city_match.group(1)}, {city_match.group(2)} {city_match.group(3)}"
-            if city.casefold() not in street.casefold():
-                return f"{street}, {city}"
-        return street
-
-    for line in lines:
-        for match in re.finditer(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*([A-Z]{2})\b", line):
-            city, state = match.group(1), match.group(2)
-            if state not in {"OK", "FL", "CA", "UT", "NV", "HI", "CO", "AZ", "WA", "NY", "TX"}:
-                continue
-            if re.search(r"timeshare|resale|realty|vacation|club|marriott|hilton|disney", city, re.I):
-                continue
-            return f"{city}, {state}"
-
-    licenses = re.findall(
-        r"\b(Utah|Nevada|Florida|California|Hawaii|Colorado|Arizona|Washington)\s+License",
-        text or "",
-        re.I,
-    )
-    return "; ".join(_prefer_longer(licenses))
+        street = re.sub(r"\s+", " ", match.group("street")).strip(" ,")
+        suite = match.group("suite")
+        if suite:
+            street = f"{street}, {re.sub(r'^,\s*', '', suite).strip(' ,')}"
+        city = re.sub(r"\s+", " ", match.group("city")).strip()
+        state = match.group("state")
+        if len(state) == 2:
+            state = state.upper()
+        return f"{street}, {city}, {state} {match.group('zip')}"
+    return ""
 
 
 def _trim(name: str) -> str:
@@ -136,78 +163,51 @@ def _trim(name: str) -> str:
     return text
 
 
+def _scan_resorts(text: str) -> list[str]:
+    found: list[str] = []
+    for match in _BRAND.finditer(text):
+        words = [_title_word(match.group(0))]
+        rest = text[match.end() :]
+        while len(words) < 7:
+            nxt = _NEXT_WORD.match(rest)
+            if not nxt:
+                break
+            words.append(_title_word(nxt.group(1)))
+            rest = rest[nxt.end() :]
+        name = _trim(" ".join(words))
+        if name and _brand_count(name) <= 1:
+            found.append(name)
+    return found
+
+
+def _title_word(word: str) -> str:
+    bare = word.strip("().")
+    letters = [char for char in bare if char.isalpha()]
+    if letters and all(char.isupper() for char in letters) and bare not in _ACRONYMS and len(letters) > 3:
+        return word.capitalize()
+    return word
+
+
+def _region_token(value: str) -> str:
+    text = re.sub(r"\s+", " ", value or "").strip(" ,")
+    if not text or re.search(r"\d|#|\boffice\b", text, re.I):
+        return ""
+    return text
+
+
 def _office(text: str) -> str:
     match = re.search(r"office is located at (?:the )?(.+?)(?: and we\b|[.]|$)", text, flags=re.I)
     if match:
         return _tidy_place(match.group(1))
-    match = re.search(r"storefront location in (downtown [A-Za-z .'-]+)", text, flags=re.I)
-    if match:
-        return _tidy_place(match.group(1))
-    match = re.search(r"(Costa del Sol in Spain)", text, flags=re.I)
-    if match:
-        return "Costa del Sol, Spain"
     match = re.search(
-        r"\b(?:in|at)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*"
+        r"\b(?:licensed(?:\s+\w+){0,4}\s+in|broker in|based in)\s+"
+        r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*"
         r"(Florida|California|Colorado|Nevada|Arizona|Washington|Hawaii|Utah)\b",
         text,
     )
     if match:
         return f"{match.group(1)}, {match.group(2)}"
-    match = re.search(r"\bBreckenridge,?\s+Colorado\b", text, flags=re.I)
-    if match:
-        return "Breckenridge, Colorado"
     return ""
-
-
-def _regions(text: str) -> list[str]:
-    found: list[str] = []
-    match = re.search(
-        r"(?:locations in the|areas of interest are|ski locations like)\s+([^.!]+)",
-        text,
-        flags=re.I,
-    )
-    if match:
-        found.extend(_split_places(match.group(1)))
-    match = re.search(r"licensed(?:\s+\w+){0,4}\s+in both\s+([^.!]+)", text, flags=re.I)
-    if match:
-        found.extend(_split_places(match.group(1)))
-    if re.search(r"\bWashington State\b", text):
-        found.append("Washington")
-    if re.search(r"\b(?:State of Hawaii|in Hawaii)\b", text, flags=re.I):
-        found.append("Hawaii")
-    if re.search(r"\bCalifornia Licensed\b|\bin California\b", text):
-        found.append("California")
-    if re.search(r"\bNevada\b", text) and re.search(r"\b(?:licensed|salesperson|broker)\b", text, flags=re.I):
-        found.append("Nevada")
-    if re.search(r"\blicensed Florida\b", text, flags=re.I):
-        found.append("Florida")
-    if re.search(r"\bMaui\b", text):
-        found.append("Maui")
-    if re.search(r"\bCabo San Lucas\b", text):
-        found.append("Cabo San Lucas")
-    for match in re.finditer(r"\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+([A-Z]{2})\b", text):
-        found.append(f"{match.group(1)}, {match.group(2)}")
-    return found
-
-
-def _label_places(label: str) -> list[str]:
-    found: list[str] = []
-    if re.search(r"\bUK\b", label):
-        found.append("United Kingdom")
-    if re.search(r"\bSpain\b", label, flags=re.I):
-        found.append("Spain")
-    return found
-
-
-def _split_places(chunk: str) -> list[str]:
-    chunk = re.sub(r"\s+&\s+", ", ", chunk)
-    chunk = re.sub(r"\s+and\s+", ", ", chunk, flags=re.I)
-    places: list[str] = []
-    for part in chunk.split(","):
-        place = _tidy_place(part)
-        if _PLACE_TAIL.match(place) or "," in place:
-            places.append(place)
-    return places
 
 
 def _tidy_place(raw: str) -> str:

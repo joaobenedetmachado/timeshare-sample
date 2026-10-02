@@ -15,7 +15,7 @@ flowchart TD
     Dedup --> CSV["CSV · 41 rows"]
 ```
 
-The goal is a verifiable sample, not a large scrape. When a field is not on the page, it stays empty.
+The goal is a verifiable sample, not a large scrape. When a field is not on the page, it is not invented. A row that still lacks a name, phone, address, or resort is left out of the CSV.
 
 ## Source discovery
 
@@ -23,7 +23,7 @@ Four public sites were reviewed:
 
 | Source | What is public | What was kept |
 | --- | --- | --- |
-| [LTRBA member directory](https://www.licensedtimeshareresalebrokers.org/members-all) | Named licensed brokers and a phone on each card. Street address and a single resort are not structured fields. | One row per member. `contact_type=agent`. `resort` and `address` stay empty. |
+| [LTRBA member directory](https://www.licensedtimeshareresalebrokers.org/members-all) | Named licensed brokers and a phone on each card. Resort and place come from the biography or the company site named on the card. | One row per member when both are present. `contact_type=agent`. Otherwise the card is left out. |
 | [SellMyTimeshareNow listings](https://www.sellmytimesharenow.com/timeshares-for-sale/) | Resort name, ad number, and a marketplace "call now" number on the detail page. | One row per detail page, capped. The phone is the marketplace line, so `contact_type=company`. |
 | [Pinnacle Vacations state results](https://www.pinnaclevacations.com/state-search.aspx) | Resort name on each result, plus the brokerage office phone and address in the page footer. | One row per distinct resort, capped. `contact_type=company`. |
 | [RedWeek](https://www.redweek.com/timeshare-companies/hgvc) | Company descriptions. Direct owner contact for a resale requires membership. | No rows. A telephone that is not on the page is not invented. |
@@ -49,7 +49,7 @@ The directory card is the source for the broker's name, phone, and the resorts o
 
 ### SellMyTimeshareNow
 
-The index page supplies detail URLs. Each detail page supplies the resort from the document title. The phone is read from `span.phone-number` inside the listing, not from the site-wide header. The resort street address on the page is the property location, so it is not copied into `address`. The badge "for sale by owner" describes the listing type. It is not a person's name, and it does not set `contact_type` to `owner`.
+The index page supplies detail URLs. Each detail page supplies the resort from the document title. The phone is read from `span.phone-number` inside the listing, not from the site-wide header. The resort location printed on the detail page (`div.location`) is stored as `address`. It is that listing's location, not the marketplace footer. The badge "for sale by owner" describes the listing type. It is not a person's name, and it does not set `contact_type` to `owner`.
 
 ### Pinnacle Vacations
 
@@ -70,15 +70,15 @@ Applied in `src/normalize.py` after collection:
 
 ## Validation
 
-A row is dropped only when it cannot be checked or contains nothing useful:
+A row is exported only when it can be checked and the core fields are present:
 
 - `contact_type` must be `owner`, `agent`, `company`, or `unknown`
 - `source_url` must be an `http` or `https` URL
 - `collected_at` must be present
-- a non-empty phone must already be in normalized form
-- at least one of `name`, `phone_number`, or `resort` must be present
+- `phone_number` must be E.164, with an optional extension
+- `name`, `address`, and `resort` must all be non-empty
 
-Empty address or empty resort is allowed.
+A field that is not on the page is not invented. The row is left out instead. Counts for this run are in [DATA_QUALITY.md](../DATA_QUALITY.md).
 
 ## Deduplication
 
@@ -104,17 +104,6 @@ Rows are sorted by source, name, and resort so repeated runs are easy to diff wh
 | `company` | The phone on the page is the marketplace or brokerage line, and the page names that business. |
 | `owner` | Not used. None of the sampled pages identify a natural person as the owner and publish that person's phone. |
 | `unknown` | Used when a collector cannot tell who a phone belongs to. The RedWeek check produced no row rather than an unknown placeholder. |
-
-## Tooling note: Scrapit
-
-[scrapit](https://github.com/joaobenedetmachado/scrapit) is a YAML-driven scraper with fetch, transform, and storage built in. It was not used as a dependency, for four reasons:
-
-1. The point of this sample is the quality pipeline. Phone, address, contact type, and cross-source deduplication are domain rules, and they are easier to review in the Python modules than inside generic YAML transforms.
-2. The pages that actually contain contacts are not one shared HTML shape. LTRBA is a Wix repeater, Pinnacle is an old ASP.NET results table, and SellMyTimeshareNow separates the listing phone from the site header.
-3. Scrapit also ships stealth, proxy, and Bright Data backends for bot-protected sites. Those features conflict with the rule that this sample must not bypass access controls.
-4. The package is still early. Pinning it would make the sample harder to install than `httpx` and `BeautifulSoup`.
-
-Scrapit would fit later as an optional fetch adapter for stable, selector-friendly pages, behind the same `Record` type, using only the BeautifulSoup backend.
 
 ## What this sample refuses to do
 
