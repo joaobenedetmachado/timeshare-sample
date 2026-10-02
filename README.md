@@ -1,5 +1,7 @@
 # Timeshare contacts
 
+[![Tests](https://github.com/joaobenedetmachado/timeshare-sample/actions/workflows/tests.yml/badge.svg)](https://github.com/joaobenedetmachado/timeshare-sample/actions/workflows/tests.yml)
+
 Public timeshare pages, cleaned into one CSV. A row is kept only when the page prints a name, a phone, a place, and one resort. The URL for that page is on the row.
 
 The file is `output/timeshare_owners.csv`. Counts for this run are in [docs/data-quality.md](docs/data-quality.md). The field rules are in [docs/methodology.md](docs/methodology.md).
