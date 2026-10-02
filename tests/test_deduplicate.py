@@ -2,7 +2,7 @@ import unittest
 
 from src.deduplicate import deduplicate
 from src.models import Record
-from src.validate import normalize_record, validate
+from src.validate import address_is_specific, choose_resort, normalize_record, validate
 
 
 class DeduplicateTests(unittest.TestCase):
@@ -77,6 +77,54 @@ class DeduplicateTests(unittest.TestCase):
         self.assertEqual(record.contact_type, "company")
         self.assertEqual(record.phone_number, "+18552993829")
         self.assertNotEqual(record.contact_type, "owner")
+
+    def test_brand_list_and_state_only_address_are_rejected(self) -> None:
+        listed = _record(
+            name="Lisa Roach",
+            address="Orlando, FL",
+            resort="Marriott; Hilton; Disney",
+        )
+        state_only = _record(name="Teresa Denney", address="Florida", resort="Marriott Vacation Club")
+        bare = _record(name="Caryn Cook", address="Downtown Palm Springs", resort="Marriott")
+        self.assertEqual(validate([listed, state_only, bare]), [])
+        self.assertEqual(choose_resort("Marriott; Hilton"), "")
+        self.assertEqual(choose_resort("Breckenridge Grand Vacations"), "")
+        self.assertEqual(choose_resort("Hilton Grand Vacation Club"), "")
+        self.assertEqual(choose_resort("Marriott Destination Points"), "")
+        self.assertEqual(choose_resort("Breckenridge Resorts"), "")
+        self.assertFalse(address_is_specific("Florida"))
+        self.assertEqual(
+            choose_resort("Marriott; Hilton; Four Seasons Residence Clubs at Aviara"),
+            "Four Seasons Residence Clubs at Aviara",
+        )
+        self.assertTrue(address_is_specific("Staines Upon Thames, Surrey, United Kingdom"))
+
+    def test_one_resort_and_a_city_are_kept(self) -> None:
+        kept = validate(
+            [
+                _record(
+                    name="Alexis Nunez",
+                    address="Carlsbad, CA",
+                    resort="Four Seasons Residence Clubs at Aviara",
+                )
+            ]
+        )
+        self.assertEqual(len(kept), 1)
+
+
+def _record(name: str, address: str, resort: str) -> Record:
+    return normalize_record(
+        Record(
+            name=name,
+            phone_number="800-485-5632",
+            address=address,
+            resort=resort,
+            source="LTRBA",
+            source_url="https://www.licensedtimeshareresalebrokers.org/members-all",
+            collected_at="2026-10-02T00:00:00Z",
+            contact_type="agent",
+        )
+    )
 
 
 if __name__ == "__main__":

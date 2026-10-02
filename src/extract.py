@@ -34,6 +34,8 @@ _TRAIL_WORDS = {
     "over",
     "directly",
     "and",
+    "by",
+    "the",
     "worldwide",
     "timeshares",
     "timeshare",
@@ -51,7 +53,6 @@ _HISTORY = re.compile(
     re.I,
 )
 _BRAND = re.compile(rf"\b(?:{_LEADING})\b", re.I)
-_NEXT_WORD = re.compile(r"(?:\s+(?:de|of|at)\s+|\s+)([A-Z][A-Za-z0-9'’\-]*)")
 _ACRONYMS = {"HGVC", "VRI", "RCI", "VI"}
 _USA = {"usa", "us", "u.s.", "u.s.a.", "united states", "united states of america"}
 _STATE_NAME = (
@@ -163,25 +164,44 @@ def _trim(name: str) -> str:
     return text
 
 
+_STEP = re.compile(r"\s+(?:((?i:de|of|at|the|by))\s+)?([A-Z][A-Za-z0-9'’\-]*)")
+
+
 def _scan_resorts(text: str) -> list[str]:
     found: list[str] = []
     for match in _BRAND.finditer(text):
-        words = [_title_word(match.group(0))]
+        words = [_title_word(part) for part in match.group(0).split()]
         rest = text[match.end() :]
         while len(words) < 7:
-            nxt = _NEXT_WORD.match(rest)
-            if not nxt:
+            if rest.lstrip().startswith("("):
                 break
-            words.append(_title_word(nxt.group(1)))
-            rest = rest[nxt.end() :]
+            step = _STEP.match(rest)
+            if not step:
+                break
+            token = step.group(2)
+            connector = (step.group(1) or "").lower()
+            if re.fullmatch(rf"(?:{_LEADING})", token, flags=re.I):
+                break
+            if connector == "the" and len(words) >= 3:
+                break
+            if connector:
+                words.append(connector)
+            words.append(_title_word(token))
+            rest = rest[step.end() :]
         name = _trim(" ".join(words))
         if name and _brand_count(name) <= 1:
             found.append(name)
     return found
 
 
+_CANON = {"worldmark": "WorldMark", "hgvc": "HGVC"}
+
+
 def _title_word(word: str) -> str:
     bare = word.strip("().")
+    canon = _CANON.get(bare.casefold())
+    if canon:
+        return canon
     letters = [char for char in bare if char.isalpha()]
     if letters and all(char.isupper() for char in letters) and bare not in _ACRONYMS and len(letters) > 3:
         return word.capitalize()
@@ -190,7 +210,7 @@ def _title_word(word: str) -> str:
 
 def _region_token(value: str) -> str:
     text = re.sub(r"\s+", " ", value or "").strip(" ,")
-    if not text or re.search(r"\d|#|\boffice\b", text, re.I):
+    if not text or re.search(r"\d|#|\boffices?\b", text, re.I):
         return ""
     return text
 

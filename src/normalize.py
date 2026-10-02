@@ -62,6 +62,7 @@ def normalize_address(raw: str) -> str:
     text = re.sub(r"\s+", " ", text).strip(" ,")
     text = re.sub(r"\s*,\s*", ", ", text)
     text = re.sub(r"(?:,\s*){2,}", ", ", text)
+    text = re.sub(r",?\s*Outside US\s*$", "", text, flags=re.I).strip(" ,")
     text = re.sub(
         r"\b([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)\b",
         lambda match: f"{match.group(1).upper()} {match.group(2)}",

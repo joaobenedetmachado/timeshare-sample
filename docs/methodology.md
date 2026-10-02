@@ -1,113 +1,59 @@
 # Methodology
 
-This sample collects a small set of public timeshare contacts and listing resorts, then cleans them with an explicit pipeline:
+Four public sites, one record shape, then the same checks for every row. A value that is not on the page is left out. It is not guessed.
 
-```mermaid
-flowchart TD
-    LTRBA["LTRBA · 21 agents"] --> Collectors
-    SMTN["SellMyTimeshareNow · 8 listings"] --> Collectors
-    PIN["Pinnacle Vacations · 12 resorts"] --> Collectors
-    RW["RedWeek · checked, 0 rows"] --> Collectors
-    Collectors --> Raw["Raw records"]
-    Raw --> Norm["Normalization"]
-    Norm --> Valid["Validation"]
-    Valid --> Dedup["Deduplication"]
-    Dedup --> CSV["CSV · 41 rows"]
-```
+## What each site actually shows
 
-The goal is a verifiable sample, not a large scrape. When a field is not on the page, it is not invented. A row that still lacks a name, phone, address, or resort is left out of the CSV.
+[LTRBA](https://www.licensedtimeshareresalebrokers.org/members-all) is a directory of licensed resale brokers. The card has a name and a phone. The profile form has a city, and sometimes a biography or a brand list. That person is an `agent`. They are not recorded as the owner.
 
-## Source discovery
+[SellMyTimeshareNow](https://www.sellmytimesharenow.com/timeshares-for-sale/) listing pages name one resort, print a location, and show a call-now number. That number is the marketplace line, so the row is `company`. The "for sale by owner" badge is a listing label. It is not a person's name and it does not change the contact type.
 
-Four public sites were reviewed:
+[Pinnacle Vacations](https://www.pinnaclevacations.com/state-search.aspx) state results name the resort on the card. The phone and the street in the footer are the brokerage office in Fort Myers. Same company on every row, different resort. `contact_type` is `company`.
 
-| Source | What is public | What was kept |
-| --- | --- | --- |
-| [LTRBA member directory](https://www.licensedtimeshareresalebrokers.org/members-all) | Named licensed brokers and a phone on each card. Resort and place come from the biography or the company site named on the card. | One row per member when both are present. `contact_type=agent`. Otherwise the card is left out. |
-| [SellMyTimeshareNow listings](https://www.sellmytimesharenow.com/timeshares-for-sale/) | Resort name, ad number, and a marketplace "call now" number on the detail page. | One row per detail page, capped. The phone is the marketplace line, so `contact_type=company`. |
-| [Pinnacle Vacations state results](https://www.pinnaclevacations.com/state-search.aspx) | Resort name on each result, plus the brokerage office phone and address in the page footer. | One row per distinct resort, capped. `contact_type=company`. |
-| [RedWeek](https://www.redweek.com/timeshare-companies/hgvc) | Company descriptions. Direct owner contact for a resale requires membership. | No rows. A telephone that is not on the page is not invented. |
-
-`robots.txt` is read before any page on that host. A missing file (HTTP 404) is treated as allowed. If `robots.txt` cannot be fetched, that host is skipped. Paths disallowed for the sample user agent are not requested. SellMyTimeshareNow publishes `Crawl-delay: 2` for `User-agent: *`; the client uses the larger of that value and `REQUEST_DELAY_SECONDS`.
-
-The sample does not log in, solve CAPTCHAs, use a residential proxy, or send a browser-impersonation user agent.
+[RedWeek](https://www.redweek.com/timeshare-companies/hgvc) was checked because it was named in the brief. The public company page has no listing phone once the header, footer, and navigation are removed. Owner contact for a resale requires an account. No row is created to fill that gap.
 
 ## Collection
 
-`src/http.py` is shared by every collector:
+`src/http.py` is the only client. It reads `robots.txt` first. A 404 means the host has no file, so public pages are allowed. Any other failure skips that host. SellMyTimeshareNow asks for a 2 second crawl delay, and the client waits at least that long. Retries are for network errors and HTTP 429 or 5xx. A 403 or 404 is not retried.
 
-- one identifiable `User-Agent`
-- a delay between requests
-- retries with backoff for network errors and HTTP 429/5xx
-- no retry for HTTP 403, 404, or other client errors
+One collector per site, each returning `Record` objects. If a collector throws, the run logs one line and moves to the next site.
 
-Each collector returns `Record` objects. A collector that fails is logged and does not stop the others.
+LTRBA reads the directory, then each member profile. The address is the city and state on the profile. If that is empty, the company site on the card is tried. The resort is kept only when the profile names one property. A list of brands is not stored as the resort.
 
-### LTRBA
+SellMyTimeshareNow takes resort names from the page title and the location from `div.location`. A location that only says "Outside US" or "Multi-Destination" is not an address. The phone comes from `span.phone-number` on the listing, not from the site header.
 
-The directory card is the source for the broker's name, phone, and the resorts or brands they name. When the card states a city, state, or office, that place is the address. When it does not, the pipeline reads the office address from the company site on the same card (the email domain) and keeps it only when that page prints a street or a city. A broker is left out of the CSV when the public text still has no resort and no place. Four cards in this run were in that group.
+Pinnacle reads Florida, Hawaii, Nevada, and South Carolina until it has 12 distinct resorts. The toll-free number and the office street are parsed from that same results page.
 
-### SellMyTimeshareNow
+## Cleaning
 
-The index page supplies detail URLs. Each detail page supplies the resort from the document title. The phone is read from `span.phone-number` inside the listing, not from the site-wide header. The resort location printed on the detail page (`div.location`) is stored as `address`. It is that listing's location, not the marketplace footer. The badge "for sale by owner" describes the listing type. It is not a person's name, and it does not set `contact_type` to `owner`.
+Normalization lives in `src/normalize.py`.
 
-### Pinnacle Vacations
+Phones become E.164. A US number is `+1` and ten digits. A UK trunk `0` after `+44` is removed. An extension stays (`+19704531226 x4`). When two numbers are joined with "or", only the first is kept. A fragment is cleared.
 
-Results are read from a few state search pages (Florida, Hawaii, Nevada, South Carolina) until the resort cap is reached. Repeated resorts on the same page collapse to one row before export as well. The toll-free number and the Fort Myers office address are parsed from that same results page. They are the brokerage contact shown with the listing, not the owner.
+Names longer than 80 characters are cleared, so a biography cannot land in the name column. Addresses lose bullet characters and extra commas. The state before a ZIP is uppercased. Nothing is geocoded.
 
-### RedWeek
+An all-caps resort is title-cased. Mixed-case names stay as published.
 
-One public company page is fetched. After `header`, `footer`, and `nav` are removed, the parser looks for `tel:` links. The sampled page has none. Owner phone, owner name, and owner address are not filled in from anywhere else.
+## What gets into the CSV
 
-## Normalization
+Validation drops a row unless all of this is true:
 
-Applied in `src/normalize.py` after collection:
+- `contact_type` is `owner`, `agent`, `company`, or `unknown`
+- `source_url` is an `http` or `https` link
+- `collected_at` is set
+- the phone is E.164, with an optional extension
+- the address is a street, or a city plus a region, not a state by itself and not a list of markets
+- the resort is one property name, not a brand list and not the word "Multi-Destination"
 
-- **Phone.** Digits are kept and formatted as E.164 (`+1` plus 10 digits for NANP numbers). A leading UK trunk `0` after `+44` is removed. An extension such as `x4` is preserved. If several numbers are joined with " or ", only the first is kept. Anything that is not an unambiguous number becomes an empty string.
-- **Name.** HTML entities are decoded and whitespace is collapsed. A value longer than 80 characters is dropped so a biography cannot land in the name column.
-- **Address.** Bullets become commas, comma spacing is normalized, and the state abbreviation before a ZIP code is uppercased. No geocoding and no guessed suite or city.
-- **Resort.** An all-caps resort name is title-cased, with small words (`and`, `at`, `of`, `the`, `on`) left lowercase after the first word. Mixed-case names are left as published.
+Deduplication key: phone digits (extension ignored), name, and resort. The same person at the same resort collapses to the fuller row. The same office line at two resorts stays. Two brokers on one phone stay.
 
-## Validation
+Export is a UTF-8 CSV at `output/timeshare_owners.csv`, sorted by source, name, and resort. Counts for the current file are in [data-quality.md](data-quality.md).
 
-A row is exported only when it can be checked and the core fields are present:
+## Contact type
 
-- `contact_type` must be `owner`, `agent`, `company`, or `unknown`
-- `source_url` must be an `http` or `https` URL
-- `collected_at` must be present
-- `phone_number` must be E.164, with an optional extension
-- `name`, `address`, and `resort` must all be non-empty
-
-A field that is not on the page is not invented. The row is left out instead. Counts for this run are in [DATA_QUALITY.md](../DATA_QUALITY.md).
-
-## Deduplication
-
-The key is normalized phone (extension ignored) + name + resort, compared case-insensitively.
-
-- The same person at the same resort is one row. The copy with more filled fields is kept.
-- The same office line at two different resorts stays as two rows, because the resort is different.
-- Two agents who share an office line stay as two rows, because the name is different.
-
-## Export
-
-`output/timeshare_owners.csv` is UTF-8, with a header and this column order:
-
-`name`, `phone_number`, `address`, `resort`, `source`, `source_url`, `collected_at`, `contact_type`
-
-Rows are sorted by source, name, and resort so repeated runs are easy to diff when the upstream pages have not changed. `collected_at` is the UTC time the page was parsed.
-
-## Contact classification
-
-| Value | Rule used here |
+| Value | When it is used |
 | --- | --- |
-| `agent` | A named person on the LTRBA licensed-broker directory. |
-| `company` | The phone on the page is the marketplace or brokerage line, and the page names that business. |
-| `owner` | Not used. None of the sampled pages identify a natural person as the owner and publish that person's phone. |
-| `unknown` | Used when a collector cannot tell who a phone belongs to. The RedWeek check produced no row rather than an unknown placeholder. |
-
-## What this sample refuses to do
-
-- Copy a site-wide support number onto a listing and call the person an owner.
-- Treat a resort street address as the contact's home or office address unless the page presents it as the contact address. Pinnacle's footer is the brokerage office, so that address is kept and labeled `company`. The resort street on a SellMyTimeshareNow detail page is not.
-- Infer a resort from a broker biography. Specialties such as "Marriott" or "Hilton" are brands, not one resort.
-- Fill a blank by searching another site for the same person.
+| `agent` | A named person on the LTRBA directory. |
+| `company` | The phone belongs to the marketplace or the brokerage, and the page names that business. |
+| `owner` | Not used. No sampled page prints an owner's name and that person's phone. |
+| `unknown` | Reserved for a phone whose side cannot be told. This run did not need it. |
