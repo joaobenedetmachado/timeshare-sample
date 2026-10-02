@@ -2,20 +2,17 @@
 
 This sample collects a small set of public timeshare contacts and listing resorts, then cleans them with an explicit pipeline:
 
-```
-Sources
-  ↓
-Collectors
-  ↓
-Raw records
-  ↓
-Normalization
-  ↓
-Validation
-  ↓
-Deduplication
-  ↓
-CSV output
+```mermaid
+flowchart TD
+    LTRBA["LTRBA · 21 agents"] --> Collectors
+    SMTN["SellMyTimeshareNow · 8 listings"] --> Collectors
+    PIN["Pinnacle Vacations · 12 resorts"] --> Collectors
+    RW["RedWeek · checked, 0 rows"] --> Collectors
+    Collectors --> Raw["Raw records"]
+    Raw --> Norm["Normalization"]
+    Norm --> Valid["Validation"]
+    Valid --> Dedup["Deduplication"]
+    Dedup --> CSV["CSV · 41 rows"]
 ```
 
 The goal is a verifiable sample, not a large scrape. When a field is not on the page, it stays empty.

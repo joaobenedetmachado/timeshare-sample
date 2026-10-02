@@ -46,20 +46,17 @@ Only pages that are reachable without an account were used.
 6. **Deduplication.** The same phone, name, and resort collapse to one row. A different resort, or a different person on a shared office line, stays.
 7. **Export.** Sorted UTF-8 CSV at `output/timeshare_owners.csv`.
 
-```
-Sources
-  ↓
-Collectors
-  ↓
-Raw records
-  ↓
-Normalization
-  ↓
-Validation
-  ↓
-Deduplication
-  ↓
-CSV output
+```mermaid
+flowchart TD
+    LTRBA["LTRBA · 21 agents"] --> Collectors
+    SMTN["SellMyTimeshareNow · 8 listings"] --> Collectors
+    PIN["Pinnacle Vacations · 12 resorts"] --> Collectors
+    RW["RedWeek · checked, 0 rows"] --> Collectors
+    Collectors --> Raw["Raw records"]
+    Raw --> Norm["Normalization"]
+    Norm --> Valid["Validation"]
+    Valid --> Dedup["Deduplication"]
+    Dedup --> CSV["CSV · 41 rows"]
 ```
 
 Field rules, the RedWeek decision, and why [Scrapit](https://github.com/joaobenedetmachado/scrapit) is not a dependency are written up in [docs/methodology.md](docs/methodology.md).
