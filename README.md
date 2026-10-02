@@ -103,4 +103,16 @@ RedWeek, SellMyTimeshareNow, and Pinnacle do not publish the owner's name and ph
 
 A biography that only lists brands, an address that is only a state, and a location that says "Multi-Destination" are left out. Filling them in would make the CSV look fuller and make it wrong.
 
+## Why a browser would not change this file
+
+The fetch is an HTTP GET. BeautifulSoup and a few regular expressions read the HTML that comes back. City, phone, resort, and the listing address on these four sites are already in that HTML. They are not drawn later by JavaScript.
+
+Selenium or Playwright would load the same public pages in a browser. That can click a "next page" control and collect more brokers or more listings. The new rows would still be an LTRBA agent or the same company phone. RedWeek's owner contact stays behind an account. A browser does not cross that without a login, and this sample does not log in.
+
+## Possible next steps
+
+- Page through Pinnacle and SellMyTimeshareNow past the current caps. That adds resorts, not owners. The phone on those rows stays the office or the marketplace line.
+- Treat near-duplicate resort titles on one page as one place. Pinnacle prints Oasis Lakes, The Fountains, and Lake Eve as separate headings for one Orlando complex.
+- Add another public source only when the page itself prints a person's name and that person's phone. Label the row `owner` then. Until that page exists, `owner` stays unused.
+
 How the work was split, including what was handed to an AI assistant, is in [docs/using-ai.md](docs/using-ai.md).
